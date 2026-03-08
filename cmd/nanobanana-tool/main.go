@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/vinq1911/nanobanana-image-tool/internal/api"
 	"github.com/vinq1911/nanobanana-image-tool/internal/config"
@@ -136,13 +138,27 @@ func runServe() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			logger.Error("server error", "error", err)
-		}
+		errCh <- srv.ListenAndServe()
 	}()
 
-	<-ctx.Done()
-	logger.Info("shutting down server")
-	srv.Shutdown(context.Background())
+	select {
+	case err := <-errCh:
+		// Server failed to start or crashed.
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		// Received SIGINT/SIGTERM — shut down gracefully with a timeout.
+		logger.Info("shutting down server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown error", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("server stopped")
+	}
 }
