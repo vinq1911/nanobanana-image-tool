@@ -6,6 +6,7 @@ Primary use case: generating children's book illustrations for [bookgen-service]
 
 ## Features
 
+- **MCP server** — plug directly into Claude Code / Claude Desktop as a tool
 - **Two inference providers**: Google Gemini API (canonical) and fal.ai
 - CLI and HTTP API interfaces
 - Deterministic output with seed control
@@ -15,13 +16,10 @@ Primary use case: generating children's book illustrations for [bookgen-service]
 ## Quick Start
 
 ```bash
-# Set your API key (pick one provider)
-export GEMINI_API_KEY="your-key"     # for Gemini (default)
-# or
-export FAL_KEY="your-key"            # for fal.ai
-export NANOBANANA_PROVIDER=falai
+# Set your API key in .env (or export it)
+echo 'GOOGLE_API_KEY=your-key' > .env
 
-# Build
+# Build both binaries (CLI + MCP server)
 make build
 
 # Generate an image via CLI
@@ -35,23 +33,100 @@ make build
 make serve
 ```
 
+## MCP Server (Claude integration)
+
+The MCP server exposes `generate_illustration` as a tool that Claude can call directly.
+
+### Build
+
+```bash
+make build          # builds both nanobanana-tool and nanobanana-mcp
+# or just the MCP server:
+make build-mcp
+```
+
+### Configure in Claude Code
+
+Add to `~/.claude/claude_code_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nanobanana": {
+      "command": "/absolute/path/to/bin/nanobanana-mcp",
+      "env": {
+        "GOOGLE_API_KEY": "your-gemini-api-key"
+      }
+    }
+  }
+}
+```
+
+Or if you use fal.ai:
+
+```json
+{
+  "mcpServers": {
+    "nanobanana": {
+      "command": "/absolute/path/to/bin/nanobanana-mcp",
+      "env": {
+        "NANOBANANA_PROVIDER": "falai",
+        "FAL_KEY": "your-fal-key"
+      }
+    }
+  }
+}
+```
+
+### Configure in Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nanobanana": {
+      "command": "/absolute/path/to/bin/nanobanana-mcp",
+      "env": {
+        "GOOGLE_API_KEY": "your-gemini-api-key"
+      }
+    }
+  }
+}
+```
+
+Once configured, Claude sees the `generate_illustration` tool and can call it directly. The tool returns the generated image as base64 (visible inline) plus JSON metadata with the saved file path.
+
+### Tool: generate_illustration
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `prompt` | string | yes | Illustration description |
+| `negative_prompt` | string | no | Things to avoid |
+| `width` | number | no | Width in pixels (default: 1024) |
+| `height` | number | no | Height in pixels (default: 1024) |
+| `seed` | number | no | Random seed for reproducibility |
+| `style` | string | no | Visual style (watercolor, crayon, etc.) |
+| `output_dir` | string | no | Save directory (default: ./output) |
+| `image_format` | string | no | png or jpg (default: png) |
+
 ## Providers
 
 ### Google Gemini API (default)
 
-Uses the official Google Gen AI Go SDK to call the Gemini image generation model directly. This is the canonical Nano Banana 2 backend.
+Uses the official Google Gen AI Go SDK. This is the canonical Nano Banana 2 backend.
 
 | Variable | Default | Description |
 |---|---|---|
 | `NANOBANANA_PROVIDER` | `gemini` | Set to `gemini` |
 | `NANOBANANA_GEMINI_API_KEY` | | API key (also reads `GEMINI_API_KEY`, `GOOGLE_API_KEY`) |
-| `NANOBANANA_GEMINI_MODEL` | `gemini-2.5-flash-preview-image-generation` | Model ID |
+| `NANOBANANA_GEMINI_MODEL` | `gemini-2.5-flash-image` | Model ID |
 
 Get a key at [Google AI Studio](https://aistudio.google.com/).
 
 ### fal.ai
 
-Uses the fal.ai REST API with queue-based async inference. Supports Nano Banana 2 and other models on their platform.
+Uses the fal.ai REST API with queue-based async inference.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -98,7 +173,7 @@ Output (JSON to stdout):
 nanobanana-tool serve
 ```
 
-Starts the HTTP API server. Configure via environment variables (see below).
+Starts the HTTP API server.
 
 ## HTTP API
 
@@ -134,11 +209,15 @@ Response:
 
 ### GET /health
 
-Returns `{"status": "ok"}` when the service is running.
+Returns `{"status": "ok"}`.
+
+### GET /tool-schema
+
+Returns the Anthropic tool use JSON schema for `generate_illustration`.
 
 ## Configuration
 
-All configuration is via environment variables. See `configs/default.env` for a full reference.
+All configuration is via environment variables or a `.env` file in the working directory. See `configs/default.env` for a full reference.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -176,28 +255,32 @@ See `examples/bookgen_integration.go` for a full working example.
 
 ```
 nanobanana-image-tool/
-  cmd/nanobanana-tool/    # CLI entrypoint
+  cmd/
+    nanobanana-tool/        # CLI + HTTP server entrypoint
+    nanobanana-mcp/         # MCP server entrypoint (for Claude)
   internal/
-    api/                  # HTTP server
-    config/               # Environment-driven configuration
+    api/                    # HTTP server + tool schema
+    config/                 # Environment-driven config with .env loading
     generator/
-      generator.go        # ImageGenerator interface
-      gemini.go           # Google Gemini API provider
-      falai.go            # fal.ai provider
-      nanobanana.go       # Provider factory
-    models/               # Request/response types
-    storage/              # Image persistence
-    logging/              # Structured logger
-  pkg/client/             # Go client library for integration
-  configs/                # Example configuration
-  examples/               # Integration examples
+      generator.go          # ImageGenerator interface
+      gemini.go             # Google Gemini API provider
+      falai.go              # fal.ai provider
+      nanobanana.go         # Provider factory
+    models/                 # Request/response types
+    storage/                # Image persistence
+    logging/                # Structured logger
+  pkg/client/               # Go client library for integration
+  configs/                  # Example configuration
+  examples/                 # Integration examples
+  tool_schema.json          # Anthropic tool use schema (standalone)
 ```
 
 ## Development
 
 ```bash
-make build    # Build the binary
-make test     # Run tests
-make serve    # Build and start HTTP server
-make clean    # Remove build artifacts and output
+make build        # Build both binaries (CLI + MCP)
+make build-mcp    # Build MCP server only
+make test         # Run tests
+make serve        # Build and start HTTP server
+make clean        # Remove build artifacts and output
 ```
