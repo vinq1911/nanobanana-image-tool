@@ -1,0 +1,47 @@
+{
+  "name": "generate_illustration",
+  "description": "Generate a children's book illustration using the Nano Banana 2 image model. Accepts a text prompt describing the desired illustration and returns the file path and metadata of the generated image. The image is saved to disk on the server running nanobanana-image-tool.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "description": "A detailed description of the illustration to generate. Be specific about subjects, setting, mood, and visual style. Example: 'a friendly robot waving hello in a colorful town, soft watercolor style, children's book illustration'"
+      },
+      "negative_prompt": {
+        "type": "string",
+        "description": "Things to avoid in the generated image. Example: 'scary, dark, violent, realistic photography'"
+      },
+      "width": {
+        "type": "integer",
+        "description": "Image width in pixels. Maps to model resolution tiers: <=512 -> 0.5K, <=1024 -> 1K, <=2048 -> 2K, >2048 -> 4K.",
+        "default": 1024
+      },
+      "height": {
+        "type": "integer",
+        "description": "Image height in pixels. Maps to model resolution tiers: <=512 -> 0.5K, <=1024 -> 1K, <=2048 -> 2K, >2048 -> 4K.",
+        "default": 1024
+      },
+      "seed": {
+        "type": "integer",
+        "description": "Random seed for deterministic generation. Omit for a random seed. Use the same seed to reproduce an identical image."
+      },
+      "style": {
+        "type": "string",
+        "description": "Visual style preset to apply. Examples: 'watercolor', 'crayon', 'digital illustration', 'pencil sketch', 'pastel'."
+      },
+      "output_dir": {
+        "type": "string",
+        "description": "Directory where the generated image will be saved. Defaults to the server's configured output directory.",
+        "default": "./output"
+      },
+      "image_format": {
+        "type": "string",
+        "enum": ["png", "jpg"],
+        "description": "Output image format.",
+        "default": "png"
+      }
+    },
+    "required": ["prompt"]
+  }
+}
