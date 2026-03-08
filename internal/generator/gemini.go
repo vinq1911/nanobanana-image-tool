@@ -64,9 +64,7 @@ func (g *GeminiGenerator) Generate(ctx context.Context, req models.GenerateReque
 		},
 	}
 
-	contents := []*genai.Content{
-		genai.NewContentFromText(prompt, genai.RoleUser),
-	}
+	contents := buildGeminiContents(prompt, req.ReferenceImages)
 
 	resp, err := client.Models.GenerateContent(ctx, g.cfg.GeminiModel, contents, config)
 	if err != nil {
@@ -133,6 +131,30 @@ func sizeToGemini(width, height int) string {
 		return "2K"
 	default:
 		return "4K"
+	}
+}
+
+// buildGeminiContents creates the content array for a Gemini request.
+// When reference images are provided, they are included as image parts
+// before the text prompt so the model can maintain character consistency.
+func buildGeminiContents(prompt string, refs []models.ReferenceImage) []*genai.Content {
+	if len(refs) == 0 {
+		return []*genai.Content{
+			genai.NewContentFromText(prompt, genai.RoleUser),
+		}
+	}
+
+	var parts []*genai.Part
+	for _, ref := range refs {
+		parts = append(parts, genai.NewPartFromBytes(ref.Data, "image/png"))
+		parts = append(parts, genai.NewPartFromText(
+			fmt.Sprintf("This is a reference image of the character named %q. Maintain this character's exact appearance in the generated image.", ref.Name),
+		))
+	}
+	parts = append(parts, genai.NewPartFromText(prompt))
+
+	return []*genai.Content{
+		genai.NewContentFromParts(parts, genai.RoleUser),
 	}
 }
 

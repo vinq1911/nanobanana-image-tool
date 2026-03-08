@@ -40,6 +40,11 @@
         "enum": ["png", "jpg"],
         "description": "Output image format.",
         "default": "png"
+      },
+      "reference_names": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Names of previously created character references to include for visual consistency. Create references with the CLI: nanobanana-tool generate-reference --name <name> --prompt <description>."
       }
     },
     "required": ["prompt"]

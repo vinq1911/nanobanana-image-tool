@@ -9,6 +9,7 @@ Primary use case: generating children's book illustrations for [bookgen-service]
 - **MCP server** — plug directly into Claude Code / Claude Desktop as a tool
 - **Two inference providers**: Google Gemini API (canonical) and fal.ai
 - CLI and HTTP API interfaces
+- **Character references** — generate named reference images and reuse them for consistent characters across illustrations
 - Deterministic output with seed control
 - Structured JSON metadata for every generated image
 - Go client library for easy integration
@@ -119,6 +120,7 @@ Once configured, Claude sees the `generate_illustration` tool and can call it di
 | `style` | string | no | Visual style (watercolor, crayon, etc.) |
 | `output_dir` | string | no | Save directory (default: ./output) |
 | `image_format` | string | no | png or jpg (default: png) |
+| `reference_names` | string[] | no | Character reference names for consistency |
 
 ## Providers
 
@@ -146,6 +148,50 @@ Uses the fal.ai REST API with queue-based async inference.
 
 Get a key at [fal.ai](https://fal.ai/).
 
+## Character References
+
+Character references let you generate a canonical image of a character and then reuse it across multiple illustrations for visual consistency.
+
+### Create references
+
+```bash
+# Generate and save a reference for "mira"
+nanobanana-tool generate-reference \
+  --prompt "girl with blue overalls and brown hair, curious expression, children's book character" \
+  --name mira \
+  --seed 12345
+
+# Generate and save a reference for "robo"
+nanobanana-tool generate-reference \
+  --prompt "small friendly robot with round body and glowing blue eyes, children's book character" \
+  --name robo \
+  --seed 99
+```
+
+### Use references in generation
+
+```bash
+# Generate an illustration with both characters
+nanobanana-tool generate \
+  --prompt "mira and robo exploring a magical forest together" \
+  --reference mira \
+  --reference robo \
+  --seed 42
+```
+
+### List saved references
+
+```bash
+nanobanana-tool list-references
+```
+
+References are stored under `<output_dir>/references/<name>/` with the image and a `metadata.json` file.
+
+### How it works
+
+- **Gemini**: reference images are passed as multimodal content parts alongside the text prompt, so the model sees the character and maintains visual consistency.
+- **fal.ai**: reference images are uploaded to fal.ai storage and passed to the `/edit` endpoint via `image_urls`.
+
 ## CLI Usage
 
 ### generate
@@ -162,6 +208,7 @@ Flags:
   --style            Style preset
   --output           Output directory (default: ./output)
   --format           Image format: png or jpg (default: png)
+  --reference        Character reference name (repeatable)
 ```
 
 Output (JSON to stdout):
@@ -175,6 +222,29 @@ Output (JSON to stdout):
   "prompt": "friendly robot in a colorful town",
   "model": "nanobanana-2"
 }
+```
+
+### generate-reference
+
+```bash
+nanobanana-tool generate-reference [flags]
+
+Flags:
+  --prompt           Character description (required)
+  --name             Character name (required)
+  --negative-prompt  Negative prompt
+  --width            Image width (default: 1024)
+  --height           Image height (default: 1024)
+  --seed             Random seed, -1 for random (default: -1)
+  --style            Style preset
+  --output           Output directory (default: ./output)
+  --format           Image format: png or jpg (default: png)
+```
+
+### list-references
+
+```bash
+nanobanana-tool list-references [--output ./output]
 ```
 
 ### serve
@@ -277,6 +347,7 @@ nanobanana-image-tool/
       falai.go              # fal.ai provider
       nanobanana.go         # Provider factory
     models/                 # Request/response types
+    references/             # Character reference store
     storage/                # Image persistence
     logging/                # Structured logger
   pkg/client/               # Go client library for integration

@@ -11,6 +11,7 @@ import (
 	"github.com/vinq1911/nanobanana-image-tool/internal/config"
 	"github.com/vinq1911/nanobanana-image-tool/internal/generator"
 	"github.com/vinq1911/nanobanana-image-tool/internal/models"
+	"github.com/vinq1911/nanobanana-image-tool/internal/references"
 	"github.com/vinq1911/nanobanana-image-tool/internal/storage"
 )
 
@@ -19,6 +20,7 @@ type Server struct {
 	cfg       *config.Config
 	generator generator.ImageGenerator
 	storage   storage.Storage
+	refStore  *references.Store
 	logger    *slog.Logger
 	srv       *http.Server
 }
@@ -29,6 +31,7 @@ func NewServer(cfg *config.Config, gen generator.ImageGenerator, store storage.S
 		cfg:       cfg,
 		generator: gen,
 		storage:   store,
+		refStore:  references.NewStore(cfg.OutputDir, logger),
 		logger:    logger,
 	}
 
@@ -79,6 +82,19 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	outputDir := req.OutputDir
 	if outputDir == "" {
 		outputDir = s.cfg.OutputDir
+	}
+
+	// Load character references if specified.
+	for _, name := range req.ReferenceNames {
+		ref, imgData, err := s.refStore.Load(name)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to load reference %q", name), err.Error())
+			return
+		}
+		req.ReferenceImages = append(req.ReferenceImages, models.ReferenceImage{
+			Name: ref.Name,
+			Data: imgData,
+		})
 	}
 
 	result, imgData, err := s.generator.Generate(r.Context(), req)

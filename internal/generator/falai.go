@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	falQueueBaseURL = "https://queue.fal.run"
-	falPollInterval = 2 * time.Second
-	falMaxWait      = 5 * time.Minute
+	falQueueBaseURL   = "https://queue.fal.run"
+	falUploadURL      = "https://fal.ai/api/storage/upload/initiate"
+	falPollInterval   = 2 * time.Second
+	falMaxWait        = 5 * time.Minute
 )
 
 // FalAIGenerator implements ImageGenerator using the fal.ai REST API
@@ -72,8 +73,18 @@ func (g *FalAIGenerator) Generate(ctx context.Context, req models.GenerateReques
 		"seed", seed,
 	)
 
+	// Upload reference images to fal.ai storage if present.
+	var refURLs []string
+	for _, ref := range req.ReferenceImages {
+		u, err := g.uploadToFalStorage(ctx, ref.Data, ref.Name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: uploading reference %q: %v", models.ErrGeneration, ref.Name, err)
+		}
+		refURLs = append(refURLs, u)
+	}
+
 	// 1. Submit to queue.
-	queueResp, err := g.submitToQueue(ctx, req, seed)
+	queueResp, err := g.submitToQueue(ctx, req, seed, refURLs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: fal.ai submit: %v", models.ErrGeneration, err)
 	}
@@ -121,7 +132,7 @@ func (g *FalAIGenerator) Generate(ctx context.Context, req models.GenerateReques
 	return result, imgData, nil
 }
 
-func (g *FalAIGenerator) submitToQueue(ctx context.Context, req models.GenerateRequest, seed int64) (*falQueueResponse, error) {
+func (g *FalAIGenerator) submitToQueue(ctx context.Context, req models.GenerateRequest, seed int64, refURLs []string) (*falQueueResponse, error) {
 	payload := map[string]any{
 		"prompt":        req.Prompt,
 		"seed":          seed,
@@ -130,12 +141,19 @@ func (g *FalAIGenerator) submitToQueue(ctx context.Context, req models.GenerateR
 		"num_images":    1,
 	}
 
+	// Use the /edit endpoint when reference images are provided.
+	endpoint := g.cfg.FalAIModel
+	if len(refURLs) > 0 {
+		endpoint = g.cfg.FalAIModel + "/edit"
+		payload["image_urls"] = refURLs
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/%s", falQueueBaseURL, g.cfg.FalAIModel)
+	url := fmt.Sprintf("%s/%s", falQueueBaseURL, endpoint)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -247,6 +265,64 @@ func (g *FalAIGenerator) downloadImage(ctx context.Context, url string) ([]byte,
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// uploadToFalStorage uploads image bytes to fal.ai's storage and returns a
+// public URL that can be used with the /edit endpoint.
+func (g *FalAIGenerator) uploadToFalStorage(ctx context.Context, data []byte, name string) (string, error) {
+	filename := fmt.Sprintf("%s.png", name)
+
+	// Step 1: Initiate upload to get a presigned URL.
+	initPayload, _ := json.Marshal(map[string]any{
+		"file_name":    filename,
+		"content_type": "image/png",
+	})
+	initReq, err := http.NewRequestWithContext(ctx, http.MethodPost, falUploadURL, bytes.NewReader(initPayload))
+	if err != nil {
+		return "", err
+	}
+	initReq.Header.Set("Content-Type", "application/json")
+	initReq.Header.Set("Authorization", "Key "+g.cfg.FalAIKey)
+
+	initResp, err := g.client.Do(initReq)
+	if err != nil {
+		return "", err
+	}
+	defer initResp.Body.Close()
+
+	if initResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(initResp.Body)
+		return "", fmt.Errorf("fal storage initiate returned %d: %s", initResp.StatusCode, string(respBody))
+	}
+
+	var uploadInfo struct {
+		FileURL   string `json:"file_url"`
+		UploadURL string `json:"upload_url"`
+	}
+	if err := json.NewDecoder(initResp.Body).Decode(&uploadInfo); err != nil {
+		return "", fmt.Errorf("decoding upload info: %w", err)
+	}
+
+	// Step 2: PUT the image data to the presigned URL.
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadInfo.UploadURL, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	putReq.Header.Set("Content-Type", "image/png")
+
+	putResp, err := g.client.Do(putReq)
+	if err != nil {
+		return "", err
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK && putResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(putResp.Body)
+		return "", fmt.Errorf("fal storage upload returned %d: %s", putResp.StatusCode, string(respBody))
+	}
+
+	g.logger.Debug("uploaded reference to fal storage", "name", name, "url", uploadInfo.FileURL)
+	return uploadInfo.FileURL, nil
 }
 
 func falFormat(format string) string {

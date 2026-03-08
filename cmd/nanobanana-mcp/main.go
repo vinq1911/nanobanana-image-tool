@@ -15,6 +15,7 @@ import (
 	"github.com/vinq1911/nanobanana-image-tool/internal/generator"
 	"github.com/vinq1911/nanobanana-image-tool/internal/logging"
 	"github.com/vinq1911/nanobanana-image-tool/internal/models"
+	"github.com/vinq1911/nanobanana-image-tool/internal/references"
 	"github.com/vinq1911/nanobanana-image-tool/internal/storage"
 )
 
@@ -28,6 +29,7 @@ func main() {
 	}
 
 	store := storage.NewLocalStorage(logger)
+	refStore := references.NewStore(cfg.OutputDir, logger)
 
 	// Create MCP server.
 	s := server.NewMCPServer(
@@ -41,7 +43,8 @@ func main() {
 		mcp.WithDescription(
 			"Generate a children's book illustration using the Nano Banana 2 image model. "+
 				"Accepts a text prompt and returns the generated image (base64) plus metadata. "+
-				"The image is also saved to disk.",
+				"The image is also saved to disk. Use reference_names to pass previously created "+
+				"character references for visual consistency across illustrations.",
 		),
 		mcp.WithString("prompt",
 			mcp.Required(),
@@ -69,10 +72,14 @@ func main() {
 			mcp.Description("Output format: 'png' or 'jpg'. Defaults to 'png'."),
 			mcp.Enum("png", "jpg"),
 		),
+		mcp.WithArray("reference_names",
+			mcp.Description("Names of previously created character references to include for visual consistency. Create references first with the CLI: nanobanana-tool generate-reference --name <name> --prompt <description>."),
+			mcp.Items(map[string]any{"type": "string"}),
+		),
 	)
 
 	// Register tool handler.
-	s.AddTool(tool, makeHandler(cfg, gen, store))
+	s.AddTool(tool, makeHandler(cfg, gen, store, refStore))
 
 	// Run as stdio server.
 	stdio := server.NewStdioServer(s)
@@ -85,6 +92,7 @@ func makeHandler(
 	cfg *config.Config,
 	gen generator.ImageGenerator,
 	store storage.Storage,
+	refStore *references.Store,
 ) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		req := models.GenerateRequest{
@@ -100,6 +108,19 @@ func makeHandler(
 		if seedVal := request.GetFloat("seed", -1); seedVal >= 0 {
 			s := int64(seedVal)
 			req.Seed = &s
+		}
+
+		// Load character references.
+		refNames := request.GetStringSlice("reference_names", nil)
+		for _, name := range refNames {
+			ref, imgData, err := refStore.Load(name)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to load reference %q: %v", name, err)), nil
+			}
+			req.ReferenceImages = append(req.ReferenceImages, models.ReferenceImage{
+				Name: ref.Name,
+				Data: imgData,
+			})
 		}
 
 		if err := req.Validate(); err != nil {
