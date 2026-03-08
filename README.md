@@ -47,36 +47,46 @@ make build-mcp
 
 ### Configure in Claude Code
 
-Add to `~/.claude/claude_code_config.json`:
+Add a `.mcp.json` at the project root (project-scoped) or `~/.claude.json` (global):
 
 ```json
 {
   "mcpServers": {
     "nanobanana": {
+      "type": "stdio",
       "command": "/absolute/path/to/bin/nanobanana-mcp",
       "env": {
-        "GOOGLE_API_KEY": "your-gemini-api-key"
+        "GOOGLE_API_KEY": "${GOOGLE_API_KEY}"
       }
     }
   }
 }
 ```
 
-Or if you use fal.ai:
+Or use the CLI:
+
+```bash
+claude mcp add --scope user --transport stdio nanobanana -- /absolute/path/to/bin/nanobanana-mcp
+```
+
+For fal.ai instead of Gemini:
 
 ```json
 {
   "mcpServers": {
     "nanobanana": {
+      "type": "stdio",
       "command": "/absolute/path/to/bin/nanobanana-mcp",
       "env": {
         "NANOBANANA_PROVIDER": "falai",
-        "FAL_KEY": "your-fal-key"
+        "FAL_KEY": "${FAL_KEY}"
       }
     }
   }
 }
 ```
+
+Verify with `claude mcp list` or `/mcp` inside Claude Code.
 
 ### Configure in Claude Desktop
 
